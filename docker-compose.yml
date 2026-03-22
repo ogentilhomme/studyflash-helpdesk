@@ -1,0 +1,89 @@
+# Studyflash Internal Helpdesk - Docker Compose
+# Run: cp .env.example .env && fill in values && docker compose up -d
+# Note: Chatwoot requires its own .env - merge with chatwoot-config/setup-notes.md
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  chatwoot-base: &chatwoot-base
+    image: chatwoot/chatwoot:latest
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USERNAME: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DATABASE: chatwoot
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      RAILS_ENV: production
+      INSTALLATION_ENV: docker
+      FRONTEND_URL: ${CHATWOOT_BASE_URL:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - chatwoot_storage:/app/storage
+
+  chatwoot-web:
+    <<: *chatwoot-base
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    ports:
+      - "3000:3000"
+    restart: always
+
+  chatwoot-worker:
+    <<: *chatwoot-base
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    restart: always
+
+  ai-pipeline:
+    build: ./ai-pipeline
+    env_file: .env
+    environment:
+      CHATWOOT_BASE_URL: http://chatwoot-web:3000
+      CHATWOOT_ACCOUNT_ID: ${CHATWOOT_ACCOUNT_ID:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    ports:
+      - "3100:3100"
+    depends_on:
+      - chatwoot-web
+
+  enrichment-service:
+    build: ./enrichment-service
+    env_file: .env
+    ports:
+      - "3200:3200"
+
+volumes:
+  postgres_data:
+  redis_data:
+  chatwoot_storage:
