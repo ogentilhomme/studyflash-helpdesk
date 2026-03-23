@@ -1,0 +1,31 @@
+# Environment & secrets (CRITICAL - never commit these)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.env
+
+# Docker
+docker-compose.override.yml
+
+# Dependencies
+node_modules/
+vendor/bundle/
+
+# Build outputs
+dist/
+build/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
