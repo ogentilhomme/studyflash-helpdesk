@@ -95,59 +95,13 @@ Subsequent customer replies on the same conversation are **not re-processed** �
 
 ---
 
-## Key design decisions
-
-### Enrichment via webhook, not Chatwoot's sidebar integration
-
-Chatwoot ships a "Custom Application" sidebar feature that embeds an iframe for each conversation. The natural approach would be to point it at `http://enrichment-service:3200/sidebar` so agents can pull context on demand.
-
-This doesn't work in a local setup. Chatwoot serves its UI over HTTP on localhost, but browsers enforce mixed-content rules: an iframe loaded from a Docker-internal `http://` URL inside any page counts as mixed content and gets blocked. Fixing this would require a valid TLS certificate and a public HTTPS endpoint — significant infrastructure overhead for an MVP.
-
-Instead, enrichment is triggered automatically from the **webhook handler** the moment a new ticket arrives. The result is formatted as a markdown internal note and posted directly into the conversation. Agents see it immediately without any sidebar setup, and it requires no HTTPS.
-
-The `/sidebar` HTML endpoint is still served by the enrichment service and can be wired up as a Chatwoot custom app in a production deployment with proper HTTPS.
-
-### Language normalization
-
-Studyflash receives tickets in many languages (Dutch, German, French, Spanish, Italian, and more). The team is not always fluent in the customer's language, and Claude needs consistent input to categorize reliably.
-
-**All incoming ticket content is translated to English before it reaches the categorization step.** This translation is done by Claude Haiku and runs in parallel with language detection. The English text is the sole input for categorization — it acts as a common, lossless base across all languages.
-
-The draft response is generated from the **original, untranslated message** combined with the detected language code. Claude is instructed to reply in the customer's language. This is a best-effort approach: for an MVP it covers the common case well, and agents can adjust the draft before sending if the language inference is off.
-
-### Claude Haiku over Sonnet
-
-The pipeline runs four sequential Claude calls per ticket (detect language, translate, categorize, draft). At the volume Studyflash handles, using Sonnet for all of these would multiply API costs significantly. Haiku is fast, cheap, and more than capable for structured classification and short-form generation tasks. Sonnet (or Opus) can be swapped in for any individual step if quality proves insufficient.
-
-### Chatwoot over a custom ticket UI
-
-Building a custom ticket UI from scratch — with threading, assignment, notifications, search, inbox management — would dominate the implementation time and produce an inferior result. Chatwoot is a mature, open-source, self-hostable support platform with a polished UI, a full REST API, and native Outlook (IMAP/SMTP) integration. It covers requirements 1, 2, and 5 out of the box and exposes exactly the webhook surface needed to hook in custom AI logic.
-
-### Thread parity with Outlook
-
-Chatwoot handles email threading by preserving `Message-ID` and `In-Reply-To` headers on all sent and received emails. A reply sent from Chatwoot arrives in the Outlook thread as a proper reply in the same chain. Conversely, a reply sent from Outlook arrives back in the same Chatwoot conversation. No custom synchronization logic is needed.
-
----
-
-## Requirements coverage
-
-| Requirement | How it's met |
-|---|---|
-| Web platform to view and respond to tickets | Chatwoot UI at `http://localhost:3000` |
-| Assignable to individual team members | Chatwoot native assignment + AI auto-assign for high-confidence tickets |
-| Enrichment (Sentry, PostHog, Postgres) | `enrichment-service` — called from webhook, result posted as internal note |
-| AI categorization, draft, assignee suggestion | `ai-pipeline` — Claude Haiku via Anthropic SDK |
-| Outlook thread parity (send + receive) | Chatwoot email channel with `Message-ID`/`In-Reply-To` header preservation |
-
----
-
 ## Setup
 
 ### Prerequisites
 
 - Docker + Docker Compose
 - An Anthropic API key
-- (Optional) Sentry, PostHog, and internal Postgres credentials for enrichment
+- Sentry, PostHog, and internal Postgres credentials for enrichment (the pipeline degrades gracefully if not configured)
 
 ### 1. Configure environment
 
@@ -155,15 +109,13 @@ Chatwoot handles email threading by preserving `Message-ID` and `In-Reply-To` he
 cp .env.example .env
 ```
 
-Open `.env` and fill in:
+Generate a secret key for Chatwoot's Rails backend and paste it into `.env` as `SECRET_KEY_BASE`:
 
 ```bash
-# Generate a Rails secret
 openssl rand -hex 64
-# → paste as SECRET_KEY_BASE
 ```
 
-At minimum you need `SECRET_KEY_BASE` and `ANTHROPIC_API_KEY`. The enrichment integrations (Sentry, PostHog, internal DB) are optional — the pipeline degrades gracefully if they are not configured.
+Fill in `ANTHROPIC_API_KEY` at minimum. Enrichment keys (`SENTRY_AUTH_TOKEN`, `POSTHOG_API_KEY`, `INTERNAL_DB_URL`) can be added later — the pipeline skips any enrichment source that is not configured.
 
 ### 2. Start all services
 
@@ -193,7 +145,7 @@ Then configure the following:
 | IMAP Port | `993` (SSL) |
 | SMTP Host | `smtp.office365.com` |
 | SMTP Port | `587` (STARTTLS) |
-| Email | `support@studyflash.ch` |
+| Email | `example@studyflash.ch` |
 | Password | App password or account password |
 
 #### Webhook for AI pipeline
@@ -210,9 +162,17 @@ Create these labels in **Settings → Labels** before running the pipeline:
 
 `bug-report` · `refund-request` · `product-question` · `other` · `needs-triage` · `high-confidence` · `ai-processed`
 
-### 5. Seed sample tickets (optional)
+#### Chatwoot API token
 
-Create an **API channel** inbox in Chatwoot (**Settings → Inboxes → Add Inbox → API**), then:
+The AI pipeline authenticates against the Chatwoot API using a personal access token. To get one:
+
+**Profile (top-right avatar) → Profile Settings → Access Token → Copy**
+
+Paste it into `.env` as `CHATWOOT_API_TOKEN`.
+
+### 5. Seed sample tickets
+
+Create an **API channel** inbox in Chatwoot (**Settings → Inboxes → Add Inbox → API**) to use as the demo inbox, then note its ID from the inbox settings URL and run:
 
 ```bash
 export CHATWOOT_API_TOKEN=<your-token>
@@ -232,7 +192,7 @@ node scripts/seed-tickets.js 10   # seeds 10 tickets; omit the number for all 10
 | `REDIS_URL` | Redis connection string (default: `redis://redis:6379`) |
 | `FRONTEND_URL` | Chatwoot base URL (default: `http://localhost:3000`) |
 | `ANTHROPIC_API_KEY` | Claude API key |
-| `CHATWOOT_API_TOKEN` | From Chatwoot → Profile → Access Token |
+| `CHATWOOT_API_TOKEN` | From Chatwoot → Profile Settings → Access Token |
 | `CHATWOOT_BASE_URL` | Chatwoot URL reachable from the pipeline container |
 | `CHATWOOT_ACCOUNT_ID` | Account ID (usually `1`) |
 | `CHATWOOT_INBOX_ID` | API inbox ID — only needed for the seed script |
@@ -245,6 +205,67 @@ node scripts/seed-tickets.js 10   # seeds 10 tickets; omit the number for all 10
 | `INTERNAL_DB_URL` | Postgres connection string for the Studyflash user database |
 
 See `.env.example` for the full list with defaults.
+
+---
+
+## Key design decisions
+
+<details>
+<summary><strong>Enrichment via webhook, not Chatwoot's sidebar integration</strong></summary>
+
+Chatwoot ships a "Custom Application" sidebar feature that embeds an iframe for each conversation. The natural approach would be to point it at `http://enrichment-service:3200/sidebar` so agents can pull context on demand.
+
+This doesn't work in a local setup. Chatwoot serves its UI over HTTP on localhost, but browsers enforce mixed-content rules: an iframe loaded from a Docker-internal `http://` URL inside any page counts as mixed content and gets blocked. Fixing this would require a valid TLS certificate and a public HTTPS endpoint — significant infrastructure overhead for an MVP.
+
+Instead, enrichment is triggered automatically from the **webhook handler** the moment a new ticket arrives. The result is formatted as a markdown internal note and posted directly into the conversation. Agents see it immediately without any sidebar setup, and it requires no HTTPS.
+
+The `/sidebar` HTML endpoint is still served by the enrichment service and can be wired up as a Chatwoot custom app in a production deployment with proper HTTPS.
+
+</details>
+
+<details>
+<summary><strong>Language normalization</strong></summary>
+
+Studyflash receives tickets in many languages (Dutch, German, French, Spanish, Italian, and more). The team is not always fluent in the customer's language, and Claude needs consistent input to categorize reliably.
+
+**All incoming ticket content is translated to English before it reaches the categorization step.** This translation is done by Claude Haiku and runs in parallel with language detection. The English text is the sole input for categorization — it acts as a common, lossless base across all languages.
+
+The draft response is generated from the **original, untranslated message** combined with the detected language code. Claude is instructed to reply in the customer's language. This is a best-effort approach: for an MVP it covers the common case well, and agents can adjust the draft before sending if the language inference is off.
+
+</details>
+
+<details>
+<summary><strong>Claude Haiku over Sonnet</strong></summary>
+
+The pipeline runs four sequential Claude calls per ticket (detect language, translate, categorize, draft). At the volume Studyflash handles, using Sonnet for all of these would multiply API costs significantly. Haiku is fast, cheap, and more than capable for structured classification and short-form generation tasks. Sonnet (or Opus) can be swapped in for any individual step if quality proves insufficient.
+
+</details>
+
+<details>
+<summary><strong>Chatwoot over a custom ticket UI</strong></summary>
+
+Building a custom ticket UI from scratch — with threading, assignment, notifications, search, inbox management — would dominate the implementation time and produce an inferior result. Chatwoot is a mature, open-source, self-hostable support platform with a polished UI, a full REST API, and native Outlook (IMAP/SMTP) integration. It covers requirements 1, 2, and 5 out of the box and exposes exactly the webhook surface needed to hook in custom AI logic.
+
+</details>
+
+<details>
+<summary><strong>Thread parity with Outlook</strong></summary>
+
+Chatwoot handles email threading by preserving `Message-ID` and `In-Reply-To` headers on all sent and received emails. A reply sent from Chatwoot arrives in the Outlook thread as a proper reply in the same chain. Conversely, a reply sent from Outlook arrives back in the same Chatwoot conversation. No custom synchronization logic is needed.
+
+</details>
+
+---
+
+## Requirements coverage
+
+| Requirement | How it's met |
+|---|---|
+| Web platform to view and respond to tickets | Chatwoot UI at `http://localhost:3000` |
+| Assignable to individual team members | Chatwoot native assignment + AI auto-assign for high-confidence tickets |
+| Enrichment (Sentry, PostHog, Postgres) | `enrichment-service` — called from webhook, result posted as internal note |
+| AI categorization, draft, assignee suggestion | `ai-pipeline` — Claude Haiku via Anthropic SDK |
+| Outlook thread parity (send + receive) | Chatwoot email channel with `Message-ID`/`In-Reply-To` header preservation |
 
 ---
 
