@@ -72,10 +72,12 @@ services:
       CHATWOOT_BASE_URL: http://chatwoot-web:3000
       CHATWOOT_ACCOUNT_ID: ${CHATWOOT_ACCOUNT_ID:-1}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ENRICHMENT_SERVICE_URL: http://enrichment-service:3200
     ports:
       - "3100:3100"
     depends_on:
       - chatwoot-web
+      - enrichment-service
 
   enrichment-service:
     build: ./enrichment-service

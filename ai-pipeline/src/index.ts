@@ -12,6 +12,7 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 3100;
+const ENRICHMENT_URL = process.env.ENRICHMENT_SERVICE_URL || "http://enrichment-service:3200";
 
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 
@@ -58,6 +59,44 @@ function extractContent(payload: WebhookPayload): { content: string; conversatio
   return null;
 }
 
+async function fetchEnrichmentNote(email: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${ENRICHMENT_URL}/enrich?email=${encodeURIComponent(email)}`);
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+
+    const lines: string[] = ["**[User Enrichment]**"];
+
+    if (data.user) {
+      lines.push(`**Account:** ${data.user.plan || "unknown plan"} · Signed up ${data.user.signupDate || "unknown"}`);
+    } else {
+      lines.push("**Account:** Not found in internal DB");
+    }
+
+    if (data.sentry?.errors?.length) {
+      lines.push(`\n**Sentry (${data.sentry.errors.length} recent error${data.sentry.errors.length > 1 ? "s" : ""}):**`);
+      for (const e of data.sentry.errors) {
+        lines.push(`- [${e.shortId}](${e.permalink || "#"}): ${e.title} _(${e.level}, ${e.lastSeen})_`);
+      }
+    } else {
+      lines.push("\n**Sentry:** No recent errors");
+    }
+
+    if (data.posthog?.recordingsLink) {
+      lines.push(`\n**PostHog:** [View session recordings](${data.posthog.recordingsLink})`);
+      if (data.posthog.recordings?.length) {
+        for (const r of data.posthog.recordings) {
+          lines.push(`- Recording \`${r.id}\` · ${Math.round(r.duration)}s`);
+        }
+      }
+    }
+
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
+}
+
 async function processTicket(content: string, conversationId: number): Promise<void> {
   const conv = await getConversation(conversationId);
   const labels = conv.labels || [];
@@ -68,6 +107,13 @@ async function processTicket(content: string, conversationId: number): Promise<v
   }
 
   console.log(`Processing conversation ${conversationId}...`);
+
+  if (conv.contactEmail) {
+    const enrichmentNote = await fetchEnrichmentNote(conv.contactEmail);
+    if (enrichmentNote) {
+      await addMessage(conversationId, enrichmentNote, true);
+    }
+  }
 
   const [languageCode, translated] = await Promise.all([
     detectLanguage(content),

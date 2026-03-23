@@ -44,65 +44,75 @@ app.get("/enrich", async (req, res) => {
   res.json(payload);
 });
 
-app.get("/sidebar", (req, res) => {
-  const email = req.query.email as string;
-  if (!email) {
-    return res.status(400).send("Missing email parameter");
-  }
-  const enrichUrl = `${req.protocol}://${req.get("host")}/enrich?email=${encodeURIComponent(email)}`;
+app.get("/sidebar", (_req, res) => {
   res.send(`
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>User Enrichment - ${email}</title>
+  <title>User Enrichment</title>
   <style>
-    body { font-family: system-ui; padding: 16px; max-width: 600px; margin: 0 auto; }
-    h2 { font-size: 16px; margin-top: 20px; }
-    ul { padding-left: 20px; }
+    body { font-family: system-ui; padding: 16px; font-size: 14px; }
+    h2 { font-size: 13px; margin: 16px 0 6px; text-transform: uppercase; color: #888; letter-spacing: 0.05em; }
+    ul { padding-left: 18px; margin: 4px 0; }
+    li { margin: 4px 0; }
     .error { color: #c00; }
     a { color: #0066cc; }
-    .empty { color: #666; font-style: italic; }
+    .empty { color: #999; font-style: italic; }
+    #email { font-size: 12px; color: #555; margin-bottom: 12px; }
   </style>
 </head>
 <body>
-  <h1>User Enrichment</h1>
-  <p><strong>Email:</strong> ${email}</p>
-  <div id="content">Loading...</div>
+  <div id="email">Waiting for contact...</div>
+  <div id="content"></div>
   <script>
-    fetch('${enrichUrl}')
-      .then(r => r.json())
-      .then(data => {
-        let html = '';
-        html += '<h2>Sentry Errors</h2>';
-        if (data.sentry.errors.length) {
-          html += '<ul>';
-          data.sentry.errors.forEach(e => {
-            html += '<li><a href="' + (e.permalink || '#') + '" target="_blank">' + e.shortId + '</a>: ' + e.title + ' (' + e.lastSeen + ')</li>';
-          });
-          html += '</ul>';
-        } else html += '<p class="empty">No recent errors</p>';
-        html += '<h2>PostHog</h2>';
-        if (data.posthog.recordingsLink) {
-          html += '<p><a href="' + data.posthog.recordingsLink + '" target="_blank">View session recordings</a></p>';
-        }
-        if (data.posthog.recordings.length) {
-          html += '<ul>';
-          data.posthog.recordings.forEach(r => {
-            html += '<li>Recording ' + r.id + ' - ' + Math.round(r.duration) + 's</li>';
-          });
-          html += '</ul>';
-        }
-        html += '<h2>User Account</h2>';
-        if (data.user) {
-          html += '<p>Plan: ' + (data.user.plan || 'N/A') + '</p>';
-          html += '<p>Signup: ' + (data.user.signupDate || 'N/A') + '</p>';
-        } else html += '<p class="empty">User not found in internal DB</p>';
-        document.getElementById('content').innerHTML = html;
-      })
-      .catch(e => {
-        document.getElementById('content').innerHTML = '<p class="error">Error: ' + e.message + '</p>';
-      });
+    function loadEnrichment(email) {
+      document.getElementById('email').textContent = email;
+      fetch('/enrich?email=' + encodeURIComponent(email))
+        .then(r => r.json())
+        .then(data => {
+          let html = '';
+
+          html += '<h2>Account</h2>';
+          if (data.user) {
+            html += '<p>Plan: <strong>' + (data.user.plan || 'N/A') + '</strong></p>';
+            html += '<p>Signed up: ' + (data.user.signupDate || 'N/A') + '</p>';
+          } else {
+            html += '<p class="empty">Not found in DB</p>';
+          }
+
+          html += '<h2>Sentry</h2>';
+          if (data.sentry.errors.length) {
+            html += '<ul>';
+            data.sentry.errors.forEach(e => {
+              html += '<li><a href="' + (e.permalink || '#') + '" target="_blank">' + e.shortId + '</a>: ' + e.title + '</li>';
+            });
+            html += '</ul>';
+          } else {
+            html += '<p class="empty">No recent errors</p>';
+          }
+
+          html += '<h2>PostHog</h2>';
+          if (data.posthog.recordingsLink) {
+            html += '<p><a href="' + data.posthog.recordingsLink + '" target="_blank">View recordings</a></p>';
+          } else {
+            html += '<p class="empty">No recordings</p>';
+          }
+
+          document.getElementById('content').innerHTML = html;
+        })
+        .catch(e => {
+          document.getElementById('content').innerHTML = '<p class="error">Error loading data</p>';
+        });
+    }
+
+    // Chatwoot passes context via postMessage
+    window.addEventListener('message', function(e) {
+      var data = e.data;
+      if (data && data.event === 'appContext' && data.data && data.data.contact && data.data.contact.email) {
+        loadEnrichment(data.data.contact.email);
+      }
+    });
   </script>
 </body>
 </html>

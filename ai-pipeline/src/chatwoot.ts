@@ -13,6 +13,7 @@ export async function getConversation(conversationId: number): Promise<{
   id: number;
   labels?: string[];
   messages?: Array<{ content: string; message_type: number }>;
+  contactEmail?: string;
 }> {
   const res = await fetch(
     `${BASE_URL}/api/v1/accounts/${ACCOUNT_ID}/conversations/${conversationId}`,
@@ -27,6 +28,7 @@ export async function getConversation(conversationId: number): Promise<{
     id: conv.id,
     labels: conv.labels || [],
     messages: conv.messages || [],
+    contactEmail: conv.meta?.sender?.email || undefined,
   };
 }
 

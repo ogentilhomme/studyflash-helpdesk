@@ -52,20 +52,14 @@ export async function fetchSessionRecordings(email: string): Promise<PostHogReco
     if (!projectId) return [];
 
     const recordingsRes = await fetch(
-      `${HOST.replace(/\/$/, "")}/api/projects/${projectId}/session_recordings/?limit=50`,
+      `${HOST.replace(/\/$/, "")}/api/projects/${projectId}/session_recordings/?limit=5&person_email=${encodeURIComponent(email)}`,
       { headers: { Authorization: `Bearer ${API_KEY}` } }
     );
     if (!recordingsRes.ok) return [];
 
     const data = (await recordingsRes.json()) as any;
     const results = data?.results || data?.recordings || [];
-    const filtered = results.filter(
-      (r: any) =>
-        r.person?.properties?.email === email ||
-        r.distinct_id === email ||
-        (r.person?.distinct_ids && r.person.distinct_ids.includes(email))
-    );
-    return filtered.slice(0, 5).map((r: any) => ({
+    return results.slice(0, 5).map((r: any) => ({
       id: r.id,
       startTime: r.start_time || r.startTime || "",
       duration: r.recording_duration || r.duration || 0,
