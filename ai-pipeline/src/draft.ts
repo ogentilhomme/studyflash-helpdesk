@@ -8,12 +8,19 @@ const client = new Anthropic();
  */
 export async function generateDraftResponse(
   ticketContent: string,
-  languageCode: string
+  languageCode: string,
+  conversationHistory?: Array<{ content: string; message_type: number }>
 ): Promise<string> {
   const langInstruction =
     languageCode === "en"
       ? "Write the response in English."
       : `Write the response in the same language as the user's message (language code: ${languageCode}).`;
+
+  const historySection = conversationHistory && conversationHistory.length > 1
+    ? `\n\nConversation history (for context only, do NOT repeat what was already said):\n${conversationHistory
+        .map((m) => `${m.message_type === 0 ? "Customer" : "Support"}: ${m.content}`)
+        .join("\n")}`
+    : "";
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -30,10 +37,11 @@ Guidelines:
 - For product questions: answer clearly, link to help if relevant
 - Never promise things outside policy (e.g. guaranteed refunds)
 - Sign off professionally (e.g. "Best regards, Studyflash Support")
+- If this is a follow-up message, acknowledge the previous exchange naturally
 
-${langInstruction}
+${langInstruction}${historySection}
 
-Customer message:
+Latest customer message:
 ${ticketContent}`,
       },
     ],

@@ -22,7 +22,7 @@ export async function getConversation(conversationId: number): Promise<{
   if (!res.ok) {
     throw new Error(`Chatwoot API error: ${res.status} ${await res.text()}`);
   }
-  const data = await res.json();
+  const data = await res.json() as any;
   const conv = data.payload || data;
   return {
     id: conv.id,
@@ -94,7 +94,7 @@ export async function getAgents(): Promise<Array<{ id: number; name: string }>> 
     { headers: headers() }
   );
   if (!res.ok) return [];
-  const data = await res.json();
+  const data = await res.json() as any;
   const payload = data.payload || data;
   const agents = Array.isArray(payload) ? payload : payload.agents || [];
   return agents.map((a: { id: number; name?: string; available_name?: string }) => ({

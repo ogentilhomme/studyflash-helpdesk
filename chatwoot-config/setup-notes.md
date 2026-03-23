@@ -1,6 +1,35 @@
 # Chatwoot Configuration for Studyflash Helpdesk
 
-## 1. Email Channel (IMAP/SMTP for Outlook)
+## 1. Email Channel (IMAP/SMTP)
+
+### Gmail
+
+1. **Enable 2-Step Verification** (required for App Passwords):
+   - Go to [myaccount.google.com/security](https://myaccount.google.com/security)
+   - Turn on **2-Step Verification**
+
+2. **Create an App Password**:
+   - Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+   - App: choose **Mail** or **Other** (name it "Chatwoot")
+   - Click **Generate** → copy the 16-character password (e.g. `abcd efgh ijkl mnop`)
+
+3. **In Chatwoot**: **Settings → Inboxes → Add Inbox → Email**
+
+4. Configure **Inbound (IMAP)**:
+   - IMAP Host: `imap.gmail.com`
+   - IMAP Port: `993` (SSL/TLS)
+   - Email: `your-email@gmail.com`
+   - Password: your 16-character App Password (no spaces)
+
+5. Configure **Outbound (SMTP)**:
+   - SMTP Host: `smtp.gmail.com`
+   - SMTP Port: `587` (STARTTLS)
+   - Email: `your-email@gmail.com`
+   - Password: same App Password as above
+
+6. Save the inbox and send a test email to verify.
+
+### Outlook / Office 365
 
 1. In Chatwoot: **Settings → Inboxes → Add Inbox → Email**
 2. Configure **Inbound**:
@@ -13,7 +42,7 @@
    - SMTP Port: `587` (STARTTLS)
    - Email: `support@studyflash.ch`
    - Password: [Same as IMAP]
-4. **Important**: Chatwoot uses `Message-ID` and `In-Reply-To` headers for thread parity. Ensure these are preserved in your Outlook setup.
+4. **Important**: Chatwoot uses `Message-ID` and `In-Reply-To` headers for thread parity.
 
 ## 2. Webhook for AI Pipeline
 

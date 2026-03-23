@@ -100,66 +100,63 @@ async function fetchEnrichmentNote(email: string): Promise<string | null> {
 async function processTicket(content: string, conversationId: number): Promise<void> {
   const conv = await getConversation(conversationId);
   const labels = conv.labels || [];
+  const isFirstMessage = !labels.includes(PROCESSED_LABEL);
 
-  if (labels.includes(PROCESSED_LABEL)) {
-    console.log(`Conversation ${conversationId} already processed, skipping`);
-    return;
-  }
+  console.log(`Processing conversation ${conversationId} (${isFirstMessage ? "first message" : "follow-up"})...`);
 
-  console.log(`Processing conversation ${conversationId}...`);
-
-  if (conv.contactEmail) {
-    const enrichmentNote = await fetchEnrichmentNote(conv.contactEmail);
-    if (enrichmentNote) {
-      await addMessage(conversationId, enrichmentNote, true);
+  if (isFirstMessage) {
+    // --- First message: full pipeline (enrichment, categorization, labeling) ---
+    if (conv.contactEmail) {
+      const enrichmentNote = await fetchEnrichmentNote(conv.contactEmail);
+      if (enrichmentNote) {
+        await addMessage(conversationId, enrichmentNote, true);
+      }
     }
-  }
 
-  const [languageCode, translated] = await Promise.all([
-    detectLanguage(content),
-    translateToEnglish(content),
-  ]);
-  const categorization = await categorize(content, translated);
+    const [languageCode, translated] = await Promise.all([
+      detectLanguage(content),
+      translateToEnglish(content),
+    ]);
+    const categorization = await categorize(content, translated);
 
-  const draft = await generateDraftResponse(content, languageCode);
+    const categoryLabels: string[] = [categorization.category];
+    if (categorization.confidence === "low") {
+      categoryLabels.push("needs-triage");
+    } else {
+      categoryLabels.push("high-confidence");
+    }
+    categoryLabels.push(PROCESSED_LABEL);
+    await addLabels(conversationId, categoryLabels);
 
-  const categoryLabels: string[] = [categorization.category];
-  if (categorization.confidence === "low") {
-    categoryLabels.push("needs-triage");
-  } else {
-    categoryLabels.push("high-confidence");
-  }
-  categoryLabels.push(PROCESSED_LABEL);
+    const draft = await generateDraftResponse(content, languageCode);
+    await addMessage(conversationId, `**[AI Draft - respond in user's language]**\n\n${draft}`, true);
 
-  await addLabels(conversationId, categoryLabels);
-
-  const draftNote = `**[AI Draft - respond in user's language]**\n\n${draft}`;
-  await addMessage(conversationId, draftNote, true);
-
-  if (categorization.suggestedAssignee) {
-    const assigneeNote = `**[Suggested assignee]** ${categorization.suggestedAssignee} (${categorization.confidence} confidence)`;
-    await addMessage(conversationId, assigneeNote, true);
-
-    if (categorization.confidence === "high") {
-      const agents = await getAgents();
-      const match = agents.find(
-        (a) =>
+    if (categorization.suggestedAssignee) {
+      await addMessage(conversationId, `**[Suggested assignee]** ${categorization.suggestedAssignee} (${categorization.confidence} confidence)`, true);
+      if (categorization.confidence === "high") {
+        const agents = await getAgents();
+        const match = agents.find((a) =>
           a.name.toLowerCase().includes(categorization.suggestedAssignee!.toLowerCase())
-      );
-      if (match) {
-        try {
-          await assignConversation(conversationId, match.id);
-          console.log(`Auto-assigned to ${match.name}`);
-        } catch (e) {
-          console.warn("Auto-assign failed:", e);
+        );
+        if (match) {
+          try {
+            await assignConversation(conversationId, match.id);
+            console.log(`Auto-assigned to ${match.name}`);
+          } catch (e) {
+            console.warn("Auto-assign failed:", e);
+          }
         }
       }
     }
-  }
 
-  console.log(
-    `Processed ${conversationId}: ${categorization.category} (${categorization.confidence})`
-  );
+    console.log(`Processed ${conversationId}: ${categorization.category} (${categorization.confidence})`);
+  } else {
+    // --- Follow-up message: just generate a new draft with conversation context ---
+    const languageCode = await detectLanguage(content);
+    const draft = await generateDraftResponse(content, languageCode, conv.messages);
+    await addMessage(conversationId, `**[AI Draft - respond in user's language]**\n\n${draft}`, true);
+    console.log(`Draft generated for follow-up on conversation ${conversationId}`);
+  }
 }
 
 app.post("/webhook", async (req, res) => {
