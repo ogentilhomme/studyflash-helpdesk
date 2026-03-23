@@ -19,7 +19,11 @@ const PROCESSED_LABEL = "ai-processed";
 
 interface WebhookPayload {
   event: string;
+  // conversation_created: conversation data is at the top level
   id?: number;
+  messages?: Array<{ content: string; message_type: number }>;
+  labels?: string[];
+  // message_created: message data is at the top level, conversation is nested
   content?: string;
   message_type?: string | number;
   conversation?: {
@@ -33,23 +37,21 @@ interface WebhookPayload {
 
 function extractContent(payload: WebhookPayload): { content: string; conversationId: number } | null {
   if (payload.event === "message_created" && payload.content) {
-    const convId = (payload as any).conversation?.id;
-    const isIncoming =
-      payload.message_type === "incoming" || payload.message_type === 1;
+    const convId = payload.conversation?.id;
+    // Chatwoot: 0 = incoming (from contact), 1 = outgoing (from agent)
+    const isIncoming = payload.message_type === "incoming" || payload.message_type === 0;
     if (convId && isIncoming) {
       return { content: payload.content, conversationId: convId };
     }
   }
 
-  if (payload.event === "conversation_created" && payload.conversation) {
-    const conv = payload.conversation;
-    const messages = conv.messages || [];
-    const firstIncoming = messages.find(
-      (m) => m.message_type === 1
-    ); // 1 = incoming (typically)
-    const content = firstIncoming?.content || messages[0]?.content;
-    if (content) {
-      return { content, conversationId: conv.id };
+  if (payload.event === "conversation_created") {
+    // Chatwoot sends conversation data at the top level for this event
+    const convId = payload.id || payload.conversation?.id;
+    const messages = payload.messages || payload.conversation?.messages || [];
+    const content = messages.find((m) => m.content)?.content;
+    if (content && convId) {
+      return { content, conversationId: convId };
     }
   }
 
@@ -126,14 +128,17 @@ app.post("/webhook", async (req, res) => {
 
   const extracted = extractContent(payload);
   if (!extracted) {
-    if (event === "conversation_created" && payload.conversation) {
-      const conv = await getConversation(payload.conversation.id).catch(() => null);
-      if (conv?.messages?.length) {
-        const firstMsg = conv.messages.find((m) => m.content)?.content;
-        if (firstMsg) {
-          processTicket(firstMsg, payload.conversation.id).catch((e) =>
-            console.error("Process error:", e)
-          );
+    if (event === "conversation_created") {
+      const convId = payload.id || payload.conversation?.id;
+      if (convId) {
+        const conv = await getConversation(convId).catch(() => null);
+        if (conv?.messages?.length) {
+          const firstMsg = conv.messages.find((m) => m.content)?.content;
+          if (firstMsg) {
+            processTicket(firstMsg, convId).catch((e) =>
+              console.error("Process error:", e)
+            );
+          }
         }
       }
     }
